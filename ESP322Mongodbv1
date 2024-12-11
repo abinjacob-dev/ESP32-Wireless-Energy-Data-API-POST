@@ -1,0 +1,105 @@
+#include <WiFi.h>
+#include <PZEM004Tv30.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// PZEM communication pins (adjust based on your ESP32 pinout)
+#define PZEM_RX_PIN 16  // RX pin (GPIO 16 on ESP32)
+#define PZEM_TX_PIN 17  // TX pin (GPIO 17 on ESP32)
+
+// Wi-Fi credentials
+const char* ssid = "SmartLink";  // Replace with your Wi-Fi SSID
+const char* password = "12345678";  // Replace with your Wi-Fi password
+
+// Node.js Server URL
+const String serverUrl = "http://192.168.1.7:3000/api/sendData";  // Replace with your Node.js server URL
+
+// Initialize HardwareSerial for PZEM communication
+HardwareSerial mySerial(1);  // Use Serial1 for PZEM communication
+PZEM004Tv30 pzem(mySerial, PZEM_RX_PIN, PZEM_TX_PIN);  // Pass both RX and TX pins to the PZEM object
+
+void setup() {
+  // Start the Serial Monitor for debugging
+  Serial.begin(115200);
+
+  // Start HardwareSerial1 for PZEM communication
+  mySerial.begin(9600, SERIAL_8N1, PZEM_RX_PIN, PZEM_TX_PIN);  
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  int attempts = 0;
+  int maxAttempts = 30;  // Try for 30 seconds to connect to Wi-Fi
+  while (WiFi.status() != WL_CONNECTED && attempts < maxAttempts) {
+    delay(1000);
+    Serial.println("Connecting to Wi-Fi...");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Connected to Wi-Fi");
+  } else {
+    Serial.println("Failed to connect to Wi-Fi.");
+  }
+
+  delay(1000);  // Allow time for serial initialization
+}
+
+void loop() {
+  // Read data from the PZEM sensor
+  float voltage = pzem.voltage();
+  float current = pzem.current();
+  float power = pzem.power();
+  float energy = pzem.energy();
+  float frequency = pzem.frequency();
+  float pf = pzem.pf();
+
+  // Check if data is valid
+  if (isnan(voltage) || isnan(current) || isnan(power) || isnan(energy) || isnan(frequency) || isnan(pf)) {
+    Serial.println("Invalid data");
+    return;
+  }
+
+  // Prepare JSON payload to send to Node.js server
+  DynamicJsonDocument doc(1024);
+  doc["voltage"] = voltage;
+  doc["current"] = current;
+  doc["power"] = power;
+  doc["energy"] = energy;
+  doc["frequency"] = frequency;
+  doc["pf"] = pf;
+  
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+
+  // Send data to Node.js server
+  sendDataToNodeServer(jsonPayload);
+
+  delay(1000);  // Send data every 1 second (real-time)
+}
+
+void sendDataToNodeServer(const String &data) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(serverUrl);  // Specify the server URL
+    
+    // Add authentication headers if needed (e.g., MongoDB API Key)
+    http.addHeader("Content-Type", "application/json");
+    
+    // Send the POST request with the data
+    int httpResponseCode = http.POST(data);
+
+    // Check if the data was sent successfully
+    if (httpResponseCode > 0) {
+      Serial.print("HTTP Response Code: ");
+      Serial.println(httpResponseCode);
+    } else {
+      Serial.print("Error sending data: ");
+      Serial.println(httpResponseCode);
+    }
+
+    // End HTTP request
+    http.end();
+  } else {
+    Serial.println("WiFi not connected!");
+  }
+}
